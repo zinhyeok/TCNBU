@@ -3,14 +3,16 @@ import numpy as np
 import yaml
 import os
 from typing import Dict, Any
+os.environ['LANGUAGE'] = 'en_US.UTF-8' 
+import rpy2.robjects as ro
+from rpy2.robjects.packages import importr
 
-# 프로젝트의 다른 모듈들을 임포트합니다.
-from models.tcn_autoencoder import TCNAutoEncoder
+from model.tcn_autoencoder import TCNAutoEncoder
 from training.trainer import Trainer
-from data.generator import generate_multi_data # gBottomup_R_unmerge.py에서 가져온 데이터 생성기
+from data.dataGenerator import generate_multi_data 
+from utils.r_utils import init_r_packages
 
 def set_seed(seed: int = 42):
-    """재현성을 위해 랜덤 시드를 고정하는 함수."""
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -20,27 +22,28 @@ def set_seed(seed: int = 42):
     torch.backends.cudnn.benchmark = False
 
 def load_config(config_path: str = './configs/default_config.yaml') -> Dict[str, Any]:
-    """YAML 설정 파일을 불러오는 함수."""
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     return config
 
 def main():
-    """메인 학습 프로세스를 실행하는 함수."""
+    print("Initializing R environment...")
+    init_r_packages()
+    print("R environment initialized successfully.")
     
-    # 1. 설정 파일 로드
+    # 1. load config
     print("Loading configuration...")
     config = load_config()
     print("Configuration loaded successfully:")
     print(yaml.dump(config, indent=2))
 
-    # 2. 재현성을 위한 시드 설정
+    # 2. seed setting
+    print("Setting random seed for reproducibility...")
     set_seed()
 
-    # 3. 학습용 시계열 데이터 생성
+    # 3. get data
     print("Generating training data...")
     train_config = config['data']['train_data_generation']
-    # gBottomup은 (n, d) 형태의 numpy 배열을 기대함
     all_data, _ = generate_multi_data(
         n=train_config['n_samples'],
         d=train_config['n_dims'],
@@ -48,10 +51,9 @@ def main():
     )
     print(f"Training data generated with shape: {all_data.shape}")
 
-    # 4. TCN-AutoEncoder 모델 초기화
+    # 4. Initialized TCN-AutoEncoder model
     print("Initializing the TCN-AutoEncoder model...")
     model_config = config['model']
-    # 데이터 차원이 설정과 다를 경우 업데이트
     model_config['in_channels'] = all_data.shape[1] 
     
     model = TCNAutoEncoder(
@@ -63,35 +65,20 @@ def main():
     )
     print("Model initialized successfully.")
 
-    # 5. Trainer 초기화
+    # 5. Initialize Trainer
     print("Initializing the Trainer...")
     trainer = Trainer(model=model, all_data=all_data, config=config)
     print("Trainer initialized successfully.")
 
-    # 6. 적응형 온라인 학습 프로세스 실행
-    # 이 run 메소드는 내부적으로 gBottomup 탐색과 모델 학습을 순환하며 실행합니다.
+    # 6. Run adaptive online learning process
     trainer.run()
 
-    # 7. 학습된 최종 인코더 모델 저장
+    # 7. Save the trained final encoder model
     print("Training complete. Saving the final encoder model...")
     save_path = config['data']['model_save_path']
-    # 디렉토리가 존재하지 않으면 생성
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    
-    # 인코더의 가중치만 저장합니다.
     torch.save(trainer.model.encoder.state_dict(), save_path)
     print(f"Encoder model saved to: {save_path}")
 
 if __name__ == '__main__':
-    # 필요한 R 패키지 로드 (gBottomup 내부에서 rpy2를 사용하므로)
-    print("Initializing R environment...")
-    try:
-        from utils import r_utils
-        r_utils.init_r_packages()
-        print("R environment initialized successfully.")
-    except Exception as e:
-        print(f"Could not initialize R environment. Please ensure R and gSeg are installed. Error: {e}")
-        # R 환경 초기화 실패 시 종료
-        exit()
-
     main()

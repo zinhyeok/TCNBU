@@ -3,16 +3,23 @@ import numpy as np
 import yaml
 import os
 from typing import Dict, Any
+import rpy2.robjects as ro
+from rpy2.robjects.packages import importr
+from rpy2.robjects.conversion import localconverter
+from rpy2.robjects import numpy2ri
+import contextlib
+import gc
+
 
 # 프로젝트의 다른 모듈들을 임포트합니다.
-from models.tcn_autoencoder import TCNEncoder # AutoEncoder 전체가 아닌 Encoder만 필요
-from models.g_bottomup import gBottomup
-from data.generator import generate_multi_data # 테스트 데이터 생성을 위해 임시 사용
+from model.tcn_autoencoder import TCNEncoder # AutoEncoder 전체가 아닌 Encoder만 필요
+from model.g_bottomup import gBottomup
+from data.dataGenerator import generate_multi_data # 테스트 데이터 생성을 위해 임시 사용
 # from models.model_selector import ModelSelector # 최종 CP 선택 로직 (구현 필요)
 
 def load_config(config_path: str = './configs/default_config.yaml') -> Dict[str, Any]:
     """YAML 설정 파일을 불러오는 함수."""
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     return config
 
@@ -118,8 +125,15 @@ if __name__ == '__main__':
     # R 환경 초기화
     print("Initializing R environment...")
     try:
-        from utils import r_utils
-        r_utils.init_r_packages()
+# R 패키지 로드
+        base = importr('base')
+        stats = importr('stats')
+        ade4 = importr('ade4')
+        gSeg = importr('gSeg')
+        jsonlite = importr('jsonlite')
+        r_dist = ro.r['dist']
+        ro.r('Sys.setenv(LANGUAGE="en")')
+        print("R setup complete.")
         print("R environment initialized successfully.")
     except Exception as e:
         print(f"Could not initialize R environment. Error: {e}")

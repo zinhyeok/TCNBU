@@ -11,7 +11,7 @@ from model.gBottomup_R import gBottomup
 from itertools import product
 from typing import Dict, List, Tuple
 from sklearn.metrics import adjusted_rand_score
-from util.dataGenerator import generate_multi_data
+from data.dataGenerator import generate_multi_data
 import rpy2.robjects as robjects
 from rpy2.robjects import numpy2ri
 from rpy2.robjects.vectors import IntVector, FloatVector

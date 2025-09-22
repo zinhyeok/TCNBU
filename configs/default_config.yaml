@@ -7,7 +7,7 @@ gbottomup:
   min_obs: 4              # 초기 세그먼트의 최소 관측치 수
   merge_percentile: 0.1   # 매 스텝에서 병합할 윈도우의 비율 (G-통계량 하위 10%)
   graph_type: 'mst'       # 그래프 생성 방식 ('mst' 또는 'nng')
-  k_max: 5                # k-MST 그래프 생성 시 사용할 최대 k값. 계산 효율성을 위해 제한.
+  k_max: 5                # k-MST 그래프 생성 시 backward에서 사용할 최대 k값
 
 # 2. TCN-AutoEncoder 모델 아키텍처 설정
 model:
@@ -35,9 +35,9 @@ training:
 data:
   # 학습 데이터 생성용 파라미터
   train_data_generation:
-    n_samples: 2000       # 학습용으로 생성할 시계열 데이터의 총 길이
+    n_samples: 200       # 학습용으로 생성할 시계열 데이터의 총 길이
     n_dims: 50            # 학습용 데이터의 변수 차원 (model.in_channels와 일치시켜야 함)
-    scenario: 'model15'   # 데이터 생성 시나리오
+    scenario: 'model1'   # 데이터 생성 시나리오
 
   # 모델 저장 및 로드 경로
   model_save_path: './saved_models/g_tcn_cpd_encoder.pth'
