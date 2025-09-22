@@ -23,6 +23,7 @@ from utils.visualize import plot_tree_layout_custom, plot_segment_tree
 from data.dataGenerator import generate_single_data, generate_multi_data
 from scipy.sparse import find
 import torch
+from model.model_selector import ModelSelector  
 
 from math import ceil, floor, log2
 from utils.r_utils import compute_g_stat_from_graph
@@ -32,7 +33,7 @@ class CPStat:          # (cp, G) 한 쌍
     G: float
 
 class gBottomup:
-    def __init__(self, encoder: torch.nn.Module,  config: dict, start_with=0, num_cp=1, alpha=0.05, isnan=0,
+    def __init__(self, encoder: torch.nn.Module,  config: dict, start_with=0, num_cp=3, alpha=0.05, isnan=0,
                 c=2, isFullTree=True, eliminate='both',  visualize=False, model_timestamp=None, logger_timestamp=None):
         """
         Parameters:
@@ -628,77 +629,104 @@ class gBottomup:
             return embedded_tensor.squeeze(0).cpu().numpy()
 
     def fit(self, data: np.ndarray):
-        """
-        Unmerge 검증을 포함한 최종 단계별 적응형 학습을 위한 fit 메소드.
-        """
         self.observations = data
         n, _ = data.shape
         self._is_first_step = True
-
-        # 1. 초기 세그먼트 생성 및 사전 Unmerge (Raw data 기반)
-        # 이 단계는 임베딩 학습 전에 실행되어 초기 세그먼트를 안정화합니다.
-        print("--- Starting Pre-Merge & Unmerge Phase (based on raw data) ---")
+        
         seg_idx = [list(range(i, min(i + self.min_obs, n))) for i in range(0, n, self.min_obs)]
         self.seg_history.append([s.copy() for s in seg_idx])
-        
-        # num_unmerge_steps = floor(log2(n))
-        # for i in range(num_unmerge_steps):
-        #     print(f"Pre-unmerge Pass {i+1}/{num_unmerge_steps}...")
-        #     seg_idx = self._perform_unmerge_pass(seg_idx) 
-        #     self.seg_history.append([s.copy() for s in seg_idx])
-        
-        print("--- Pre-Merge & Unmerge Phase Complete ---")
 
-        # 2. 메인 탐색-학습 순환 루프
         while len(seg_idx) > 1:
             window_indices = self.sliding_windows(seg_idx)
             if not window_indices: break
 
-            window_lst = [[[self.observations[idx] for idx in sublist] for sublist in group] for group in window_indices]
-            # window_lst의 각 window를 2D numpy 배열로 변환
-            window_lst_np = [np.vstack([np.array(sublist) for sublist in group]) for group in window_lst]
+            min_window_length = min(sum(len(seg) for seg in w) for w in window_indices)
+            cp_stats_now = [self.compute_G(win_idx, False, min_window_length) for win_idx in window_indices]
+            self.merge_history.append(cp_stats_now)
 
-            min_window_length = min(sum(len(seg) for seg in w) for w in window_indices) if window_indices else 0
-
-            cp_stats_now = [self.compute_G(win_idx, False, min_window_length) 
-                            for window, win_idx in zip(window_lst_np, window_indices)]
-
-            # 2.2. 병합할 후보(긍정 쌍) 식별
             candidate_indices = self.select_merge_indices_rank(cp_stats_now)
             if not candidate_indices: break
             
-            # 2.3. 세그먼트 병합 수행
-            # 어떤 윈도우가 병합되었는지 추적하기 위해 병합 전 세그먼트 구조 저장
-            positive_pairs_before_unmerge = candidate_indices.copy()
-
-            seg_idx_after_merge = self.merge_segments_sequential(window_indices, cp_stats_now, positive_pairs_before_unmerge)
-
-            # # 2.4. 병합 후 Unmerge 검증 단계
-            # # 이 단계는 방금 병합된 세그먼트가 통계적으로 유의미한지 검증합니다.
-            # print("Performing post-merge unmerge check...")
-            # seg_idx_after_unmerge = self._perform_unmerge_pass(seg_idx_after_merge)
-            # self.seg_history.append([s.copy() for s in seg_idx_after_unmerge])
-
-            # 2.5. 🔥 Unmerge된 긍정 쌍 필터링
-            # Unmerge 과정에서 다시 분리된 쌍은 "잘못된" 긍정 쌍이므로 학습 데이터에서 제외합니다.
-            # valid_positive_pairs = []
-            # unmerged_set = {tuple(map(tuple, s)) for s in seg_idx_after_unmerge}
-
-            # for pair in positive_pairs_before_unmerge:
-            #     pair_tuple = tuple(map(tuple, pair))
-            #     if pair_tuple not in unmerged_set:
-            #         valid_positive_pairs.append(pair)
-            #     else:
-            #         print(f"Invalidated a positive pair due to unmerge: {pair}")
-            
-            # 2.6. 🔥 유효한 긍정 쌍만 Trainer에게 전달하고 모델 업데이트 기다림
-            valid_positive_pairs = positive_pairs_before_unmerge
-            new_encoder = yield valid_positive_pairs
+            # 긍정 쌍을 yield하고 외부의 신호를 기다림
+            positive_pairs_this_step = [window_indices[i] for i in candidate_indices]
+            new_encoder = yield positive_pairs_this_step
             if new_encoder is not None:
                 self.set_encoder(new_encoder)
-            
-            # 2.7. 다음 스텝을 위해 상태 업데이트
-            self._is_first_step = False
-            seg_idx = seg_idx_after_merge
 
-            return valid_positive_pairs
+            # 세그먼트 병합 및 다음 스텝 준비
+            seg_idx = self.merge_segments_sequential(window_indices, cp_stats_now, candidate_indices)
+            self.seg_history.append([s.copy() for s in seg_idx])
+            self._is_first_step = False
+
+    def detect(self, data: np.ndarray, selection_method: str = 'backward') -> List[int]:
+        """
+        최종 변화점 탐지 및 선택을 수행하는 메소드.
+
+        학습된 인코더를 사용하여 Bottom-up 프로세스를 끝까지 실행하고,
+        ModelSelector를 통해 최적의 변화점을 반환합니다.
+
+        Args:
+            data (np.ndarray): 탐지를 수행할 데이터.
+            selection_method (str): 'forward', 'backward', 'stepwise' 중 모델 선택 방법.
+
+        Returns:
+            List[int]: 최종적으로 선택된 변화점 리스트.
+        """
+        print(f"\n--- Starting final detection with '{selection_method}' selection ---")
+        
+        # 1. fit 제너레이터를 학습 없이(send(None)) 끝까지 실행하여 merge_history를 채웁니다.
+        detection_generator = self.fit(data)
+        try:
+            while True:
+                next(detection_generator)
+                detection_generator.send(None) # 학습을 진행하지 않음
+        except StopIteration:
+            print("Full merge history collected.")
+
+        # 2. 내부적으로 ModelSelector를 생성하고 실행합니다.
+        selector = ModelSelector(self)
+
+        if self.alpha is not None: 
+            cp_candidate = self.select_cps_by_connected_rule()
+            G_value = None
+        else: 
+            cp_estimate = []
+            G_value = None
+
+        cp_candidate = sorted((list(set(cp_candidate))))  # 혹시 모를 중복 제거를 위해 set으로 변환
+        cp_cand_ori = cp_candidate.copy()
+        merge_summary_dict = {
+            step + 1: [(stat.cp, round(stat.G, 4)) for stat in stats_list]
+            for step, stats_list in enumerate(self.merge_history)
+            }
+
+        if selection_method == 'forward':
+        # Forward Selection with ep-BIC
+            cp_estimate, G_value = selector.forward_selection(candidate_cps=cp_candidate)
+        elif selection_method == 'backward':
+            # Backward Elimination. 초기 후보는 마지막 merge 단계의 모든 cp
+            cp_estimate, G_value = selector.backward_elimination(candidate_cps=cp_candidate)
+        elif selection_method == 'both' or selection_method == 'stepwise':
+            cp_estimate, G_value = selector.stepwise_elimination(candidate_cps=cp_candidate)
+        elif selection_method == 'topk':
+            cp_estimate_now = set()
+            # Top-K Selection. k는 self.num_cp
+            if self.num_cp is None or self.num_cp <= 0:
+                raise ValueError("num_cp must be a positive integer for 'topk' elimination.")
+            else:
+                cp_estimate_now = set()
+                for stats_list in self.merge_history[::-1]:  # 마지막 단계부터 거꾸로
+                    topk_stats = [stat.cp for stat in stats_list]
+                    cp_estimate_now.update(topk_stats)
+                    if len(cp_estimate_now) >= self.num_cp:
+                        break
+            cp_estimate = sorted(list(cp_estimate_now))
+            G_value = None
+        else:
+            cp_estimate= cp_estimate
+            G_value = None
+
+        cp_candidate = cp_cand_ori.copy()
+        cp_estimate = [cp + self.start_with for cp in cp_estimate]
+        cp_candidate = [cp + self.start_with for cp in cp_candidate]
+        return cp_estimate, G_value, cp_candidate

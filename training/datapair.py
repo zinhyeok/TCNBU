@@ -54,8 +54,8 @@ class PairDataset(Dataset):
         # 긍정 쌍 [history_indices_list, future_indices_list]
         pair = self.positive_pairs[idx]
         
-        history_indices = list(chain.from_iterable(pair[0]))
-        future_indices = list(chain.from_iterable(pair[1]))
+        history_indices = pair[0]
+        future_indices = pair[1]
         
         # 원본 데이터에서 해당 인덱스의 데이터를 추출
         history_data = self.all_data[history_indices, :]

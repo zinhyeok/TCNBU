@@ -118,7 +118,7 @@ class ModelSelector:
 
             # gBottomup 인스턴스의 compute_G 메서드 호출
             cp_stat = self.model.compute_G(
-                window, idx,
+                idx,
                 eliminate=True,
                 min_window_length=min_len
             )

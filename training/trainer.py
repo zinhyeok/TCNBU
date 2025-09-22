@@ -86,39 +86,32 @@ class Trainer:
         print(f"--- Model Updated ---")
 
 
-    def run(self):
-        """단계별 적응형 학습 및 탐색 프로세스를 시작합니다."""
+    def run_adaptive_learning(self):
+        """단계별 적응형 학습을 수행하고, 최종적으로 훈련된 인코더를 반환합니다."""
         print("Starting bootstrapped adaptive learning process...")
         
-        # gBottomup.fit()은 제너레이터이므로, for loop로 각 스텝을 순회합니다.
         g_bottomup_generator = self.g_bottomup.fit(self.all_data)
         
         step_count = 0
-        for positive_pairs_this_step in g_bottomup_generator:
-            step_count += 1
-            is_first_step = (step_count == 1)
-            
-            print(f"\n[Step {step_count}] gBottomup provided {len(positive_pairs_this_step)} new positive pairs.")
-            if is_first_step:
-                print("This is the first step, based on raw data statistics.")
-            else:
-                print("Based on the latest embedding space statistics.")
-
-            # 1. 이번 스텝에서 얻은 긍정 쌍을 누적 데이터셋에 추가
-            self.accumulated_pairs.extend(positive_pairs_this_step)
-
-            # 2. 누적된 전체 데이터로 모델 업데이트
-            self._train_on_accumulated_pairs()
-            
-            # 3. 🔥 gBottomup에 업데이트된 인코더를 다시 주입 (send)
-            #    제너레이터의 다음 루프(다음 스텝)는 이 새로운 인코더를 사용하게 됩니다.
-            try:
+        try:
+            while True:
+                # 1. gBottomup으로부터 긍정 쌍을 받음
+                positive_pairs_this_step = next(g_bottomup_generator)
+                step_count += 1
+                
+                print(f"\n[Step {step_count}] gBottomup provided {len(positive_pairs_this_step)} new positive pairs.")
+                
+                # 2. 긍정 쌍 누적 및 모델 업데이트
+                self.accumulated_pairs.extend(positive_pairs_this_step)
+                self._train_on_accumulated_pairs()
+                
+                # 3. gBottomup에 업데이트된 인코더 주입
                 g_bottomup_generator.send(self.model.encoder)
-            except StopIteration:
-                # gBottomup이 마지막 스텝이었던 경우, send에서 StopIteration이 발생할 수 있음
-                break
 
-        print("\n========================================================")
-        print("gBottomup process finished.")
-        print("Adaptive learning and detection process complete.")
-        print("========================================================")
+        except StopIteration:
+            print("\n========================================================")
+            print("Adaptive learning process complete.")
+            print("Returning the final trained encoder.")
+            print("========================================================")
+            # 제너레이터가 끝나면 최종 학습된 인코더를 반환
+            return self.model.encoder
