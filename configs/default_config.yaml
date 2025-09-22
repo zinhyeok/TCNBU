@@ -1,0 +1,43 @@
+# ===================================================================
+# g-TCN-CPD 모델의 기본 설정 파일
+# ===================================================================
+
+# 1. gBottomup 탐색 알고리즘 설정
+gbottomup:
+  min_obs: 4              # 초기 세그먼트의 최소 관측치 수
+  merge_percentile: 0.1   # 매 스텝에서 병합할 윈도우의 비율 (G-통계량 하위 10%)
+  graph_type: 'mst'       # 그래프 생성 방식 ('mst' 또는 'nng')
+  k_max: 5                # k-MST 그래프 생성 시 사용할 최대 k값. 계산 효율성을 위해 제한.
+
+# 2. TCN-AutoEncoder 모델 아키텍처 설정
+model:
+  in_channels: 50         # 입력 데이터의 변수 차원 (데이터에 따라 변경 필요)
+  embedding_dim: 16       # 포인트별 임베딩 벡터의 최종 차원
+  hidden_channels: 64     # TCN 블록 내부의 은닉 채널 수
+  depth: 3                # 인코더/디코더에 쌓을 TCN 블록의 수
+  kernel_size: 4          # TCN 컨볼루션 커널의 크기
+  max_len: 100            # PairDataset에서 사용할 시퀀스의 최대 길이 (패딩/트렁케이팅 기준)
+
+# 3. Trainer 및 학습 프로세스 설정
+training:
+  learning_rate: 0.0001   # 옵티마이저(Adam)의 학습률
+  batch_size: 64          # 모델 학습 시 사용할 미니배치 크기
+  train_epochs: 5         # 매 모델 업데이트 시 수행할 학습 에폭 수
+  
+  # 손실 함수 관련 설정
+  lambda_recon: 0.5       # 최종 손실에서 재구성 손실(L_recon)이 차지하는 가중치
+  temperature: 0.1        # InfoNCE 대조 학습 손실의 온도(temperature) 파라미터
+
+  # 적응형 온라인 학습 주기 설정
+  update_interval_steps: 5 # gBottomup을 몇 스텝 진행할 때마다 임베딩 모델을 업데이트할지 결정 (M 스텝)
+
+# 4. 데이터 생성 및 경로 설정 (main_train.py, main_detect.py에서 사용)
+data:
+  # 학습 데이터 생성용 파라미터
+  train_data_generation:
+    n_samples: 2000       # 학습용으로 생성할 시계열 데이터의 총 길이
+    n_dims: 50            # 학습용 데이터의 변수 차원 (model.in_channels와 일치시켜야 함)
+    scenario: 'model15'   # 데이터 생성 시나리오
+
+  # 모델 저장 및 로드 경로
+  model_save_path: './saved_models/g_tcn_cpd_encoder.pth'
